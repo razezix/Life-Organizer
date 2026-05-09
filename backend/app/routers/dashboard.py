@@ -1,14 +1,14 @@
 from datetime import date, timedelta
 from fastapi import APIRouter, Depends
+from sqlalchemy import func, case, and_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.dependencies import get_current_user
 from app.models.task import Task, TaskStatus
-from app.models.habit import Habit
+from app.models.habit import Habit, HabitLog
 from app.models.goal import Goal, GoalStatus
 from app.models.user import User
-from app.routers.habits import calc_streak
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -18,46 +18,49 @@ def get_dashboard(db: Session = Depends(get_db), current_user: User = Depends(ge
     today = date.today()
     week_ago = today - timedelta(days=7)
 
-    # Tasks stats
-    all_tasks = db.query(Task).filter(Task.user_id == current_user.id).all()
-    tasks_total = len(all_tasks)
-    tasks_done = sum(1 for t in all_tasks if t.status == TaskStatus.done)
-    tasks_this_week = [t for t in all_tasks if t.created_at.date() >= week_ago]
-    tasks_done_this_week = sum(1 for t in tasks_this_week if t.status == TaskStatus.done)
+    # Tasks stats via SQL aggregates
+    task_stats = db.query(
+        func.count(Task.id).label("total"),
+        func.count(case((Task.status == TaskStatus.done, 1))).label("done"),
+        func.count(case((func.date(Task.created_at) >= week_ago, 1))).label("this_week_total"),
+        func.count(case((
+            and_(Task.status == TaskStatus.done, func.date(Task.created_at) >= week_ago), 1
+        ))).label("this_week_done"),
+    ).filter(Task.user_id == current_user.id).one()
 
-    # Habits stats
+    # Habits — need logs for streak calc, but only load minimal data
     habits = db.query(Habit).filter(Habit.user_id == current_user.id).all()
+    from app.routers.habits import calc_streak
     habits_with_streaks = [
         {"id": h.id, "title": h.title, "streak": calc_streak(h.logs, h.frequency)}
         for h in habits
     ]
     top_streak = max((h["streak"] for h in habits_with_streaks), default=0)
 
-    # Goals stats
-    goals = db.query(Goal).filter(Goal.user_id == current_user.id).all()
-    goals_active = sum(1 for g in goals if g.status == GoalStatus.active)
-    goals_completed = sum(1 for g in goals if g.status == GoalStatus.completed)
-    avg_progress = (
-        sum(g.progress for g in goals if g.status == GoalStatus.active) / goals_active
-        if goals_active else 0
-    )
+    # Goals stats via SQL aggregates
+    goal_stats = db.query(
+        func.count(case((Goal.status == GoalStatus.active, 1))).label("active"),
+        func.count(case((Goal.status == GoalStatus.completed, 1))).label("completed"),
+        func.coalesce(func.avg(case((Goal.status == GoalStatus.active, Goal.progress))), 0).label("avg_progress"),
+    ).filter(Goal.user_id == current_user.id).one()
 
-    # Weekly task completion chart (last 7 days)
+    # Weekly chart via SQL
     weekly_chart = []
     for i in range(6, -1, -1):
         day = today - timedelta(days=i)
-        done_count = sum(
-            1 for t in all_tasks
-            if t.status == TaskStatus.done and t.created_at.date() == day
-        )
-        weekly_chart.append({"date": day.isoformat(), "completed": done_count})
+        count = db.query(func.count(Task.id)).filter(
+            Task.user_id == current_user.id,
+            Task.status == TaskStatus.done,
+            func.date(Task.created_at) == day,
+        ).scalar()
+        weekly_chart.append({"date": day.isoformat(), "completed": count})
 
     return {
         "tasks": {
-            "total": tasks_total,
-            "done": tasks_done,
-            "this_week_total": len(tasks_this_week),
-            "this_week_done": tasks_done_this_week,
+            "total": task_stats.total,
+            "done": task_stats.done,
+            "this_week_total": task_stats.this_week_total,
+            "this_week_done": task_stats.this_week_done,
         },
         "habits": {
             "total": len(habits),
@@ -65,9 +68,9 @@ def get_dashboard(db: Session = Depends(get_db), current_user: User = Depends(ge
             "streaks": habits_with_streaks,
         },
         "goals": {
-            "active": goals_active,
-            "completed": goals_completed,
-            "avg_progress": round(avg_progress, 1),
+            "active": goal_stats.active,
+            "completed": goal_stats.completed,
+            "avg_progress": round(float(goal_stats.avg_progress), 1),
         },
         "weekly_chart": weekly_chart,
     }

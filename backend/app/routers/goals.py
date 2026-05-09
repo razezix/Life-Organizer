@@ -1,8 +1,8 @@
-from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.pagination import PaginationParams, PaginatedResponse
 from app.dependencies import get_current_user
 from app.models.goal import Goal, GoalMilestone
 from app.models.user import User
@@ -11,9 +11,16 @@ from app.schemas.goal import GoalCreate, GoalUpdate, GoalOut, MilestoneCreate, M
 router = APIRouter(prefix="/goals", tags=["goals"])
 
 
-@router.get("", response_model=List[GoalOut])
-def list_goals(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(Goal).filter(Goal.user_id == current_user.id).order_by(Goal.created_at.desc()).all()
+@router.get("", response_model=PaginatedResponse[GoalOut])
+def list_goals(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    q = db.query(Goal).filter(Goal.user_id == current_user.id)
+    total = q.count()
+    items = q.order_by(Goal.created_at.desc()).offset(pagination.skip).limit(pagination.limit).all()
+    return PaginatedResponse(items=items, total=total, skip=pagination.skip, limit=pagination.limit)
 
 
 @router.post("", response_model=GoalOut, status_code=201)

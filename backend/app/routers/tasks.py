@@ -1,20 +1,22 @@
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.pagination import PaginationParams, PaginatedResponse
 from app.dependencies import get_current_user
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 from app.models.user import User
 from app.schemas.task import TaskCreate, TaskUpdate, TaskOut
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
-@router.get("", response_model=List[TaskOut])
+@router.get("", response_model=PaginatedResponse[TaskOut])
 def list_tasks(
-    status: Optional[str] = Query(None),
+    status: Optional[TaskStatus] = Query(None),
     category: Optional[str] = Query(None),
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -23,7 +25,9 @@ def list_tasks(
         q = q.filter(Task.status == status)
     if category:
         q = q.filter(Task.category == category)
-    return q.order_by(Task.created_at.desc()).all()
+    total = q.count()
+    items = q.order_by(Task.created_at.desc()).offset(pagination.skip).limit(pagination.limit).all()
+    return PaginatedResponse(items=items, total=total, skip=pagination.skip, limit=pagination.limit)
 
 
 @router.post("", response_model=TaskOut, status_code=201)

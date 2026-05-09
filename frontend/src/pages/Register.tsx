@@ -1,68 +1,78 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { AxiosError } from 'axios'
 import { authApi } from '../api/endpoints'
 import { useAuthStore } from '../store/authStore'
+import { useT } from '../i18n/useT'
+import { usePrefs } from '../i18n/store'
+
+function extractMessage(err: unknown, fallback: string): string {
+  if (err instanceof AxiosError) {
+    const detail = err.response?.data?.detail
+    if (Array.isArray(detail)) return detail.map((d: { msg?: string }) => d.msg || '').filter(Boolean).join(', ')
+    if (typeof detail === 'string') return detail
+    return err.message
+  }
+  return fallback
+}
 
 export default function Register() {
+  const t = useT()
+  const { lang, setLang } = usePrefs()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
   const { setTokens } = useAuthStore()
   const navigate = useNavigate()
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setLoading(true)
     try {
       await authApi.register(email, password)
       const { data } = await authApi.login(email, password)
       setTokens(data.access_token, data.refresh_token)
       navigate('/')
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg || 'Ошибка регистрации')
+    } catch (err) {
+      setError(extractMessage(err, t('registerError')))
+    } finally {
+      setLoading(false)
     }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="bg-white p-8 rounded-xl shadow-sm w-full max-w-sm">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Регистрация</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">{t('signUp')}</h1>
+          <button onClick={() => setLang(lang === 'en' ? 'ru' : 'en')}
+            className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium uppercase">
+            {lang === 'en' ? 'EN' : 'RU'}
+          </button>
+        </div>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('email')}</label>
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('password')}</label>
+            <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <p className="text-xs text-gray-400 mt-1">{t('passwordHint')}</p>
           </div>
           {error && <p className="text-red-500 text-sm">{error}</p>}
-          <button
-            type="submit"
-            className="w-full bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
-          >
-            Зарегистрироваться
+          <button type="submit" disabled={loading}
+            className="w-full bg-indigo-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50">
+            {loading ? t('signingUp') : t('signUp')}
           </button>
         </form>
         <p className="mt-4 text-sm text-center text-gray-500">
-          Уже есть аккаунт?{' '}
-          <Link to="/login" className="text-indigo-600 hover:underline">
-            Войти
-          </Link>
+          {t('haveAccount')}{' '}
+          <Link to="/login" className="text-indigo-600 hover:underline">{t('signIn')}</Link>
         </p>
       </div>
     </div>

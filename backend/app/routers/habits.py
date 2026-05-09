@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.pagination import PaginationParams, PaginatedResponse
 from app.dependencies import get_current_user
 from app.models.habit import Habit, HabitLog
 from app.models.user import User
@@ -44,10 +45,21 @@ def habit_to_out(habit: Habit) -> HabitOut:
     )
 
 
-@router.get("", response_model=List[HabitOut])
-def list_habits(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    habits = db.query(Habit).filter(Habit.user_id == current_user.id).all()
-    return [habit_to_out(h) for h in habits]
+@router.get("", response_model=PaginatedResponse[HabitOut])
+def list_habits(
+    pagination: PaginationParams = Depends(),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    q = db.query(Habit).filter(Habit.user_id == current_user.id)
+    total = q.count()
+    habits = q.offset(pagination.skip).limit(pagination.limit).all()
+    return PaginatedResponse(
+        items=[habit_to_out(h) for h in habits],
+        total=total,
+        skip=pagination.skip,
+        limit=pagination.limit,
+    )
 
 
 @router.post("", response_model=HabitOut, status_code=201)
